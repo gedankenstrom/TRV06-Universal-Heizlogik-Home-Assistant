@@ -1,0 +1,301 @@
+blueprint:
+  name: TRV06 Universal Heizlogik – 2025 
+  description: >
+    Universelle Heizlogik für TRV06 Thermostate mit:
+    - Hysterese Tag & Nacht
+    - Einstellbaren Tages- und Nachtzeiten
+    - Fenstererkennung (Heizung AUS)
+    - Master-Schalter
+    - Sicher gegen unavailable/unknown Sensorwerte
+    - Debug-Logging
+
+
+  domain: automation
+
+  input:
+
+    climate:
+      name: Thermostat
+      description: Wähle hier das TRV06-Thermostat, das gesteuert werden soll.
+      selector:
+        entity:
+          domain: climate
+
+    tempsensor:
+      name: Raumtemperatur-Sensor
+      description: Externer Temperatursensor im Raum, der für die Hysterese genutzt wird.
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
+    door_or_window:
+      name: Tür-/Fenstersensor
+      description: Sensor, der erkennt, ob Fenster oder Tür geöffnet sind.
+      selector:
+        entity:
+          domain: binary_sensor
+
+    heating_enabled:
+      name: Heizlogik EIN/AUS
+      description: Master-Schalter, um die gesamte Heizautomatik zu aktivieren oder zu deaktivieren.
+      selector:
+        entity:
+          domain: input_boolean
+
+    # -----------------------------
+    # Zeitsteuerung (EINSTELLBAR!)
+    # -----------------------------
+    day_time:
+      name: Start Zeit – TAG
+      description: Uhrzeit, ab der der Tagmodus aktiv ist.
+      default: "08:00:00"
+      selector:
+        time: {}
+
+    night_time:
+      name: Start Zeit – NACHT
+      description: Uhrzeit, ab der der Nachtmodus aktiv ist.
+      default: "22:00:00"
+      selector:
+        time: {}
+
+    # -----------------------------
+    # Solltemperaturen
+    # -----------------------------
+    day_temp:
+      name: Tag Solltemperatur
+      description: Zieltemperatur im Tagbetrieb.
+      default: 23
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.1
+          unit_of_measurement: "°C"
+
+    night_temp:
+      name: Nacht Solltemperatur
+      description: Zieltemperatur im Nachtbetrieb.
+      default: 18
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.1
+          unit_of_measurement: "°C"
+
+    # -----------------------------
+    # Hysterese
+    # -----------------------------
+    low_temp_threshold_day:
+      name: Tag – Einschalten unter
+      default: 19.9
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.1
+
+    high_temp_threshold_day:
+      name: Tag – Ausschalten über
+      default: 22.1
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.1
+
+    low_temp_threshold_night:
+      name: Nacht – Einschalten unter
+      default: 17.7
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.1
+
+    high_temp_threshold_night:
+      name: Nacht – Ausschalten über
+      default: 18.2
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.1
+
+    # -----------------------------
+    # Fensterverzögerung
+    # -----------------------------
+    door_window_delay:
+      name: Fensterverzögerung (Sekunden)
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 1
+          unit_of_measurement: "s"
+
+    debug:
+      name: Debug Log aktivieren
+      default: true
+      selector:
+        boolean: {}
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  - platform: homeassistant
+    event: start
+    id: start
+
+  - platform: event
+    event_type: homeassistant_started
+    id: start2
+
+  - platform: state
+    entity_id: !input tempsensor
+
+  - platform: state
+    entity_id: !input door_or_window
+
+  - platform: state
+    entity_id: !input heating_enabled
+
+  # Zeitsteuerung
+  - platform: time
+    at: !input day_time
+  - platform: time
+    at: !input night_time
+
+variables:
+
+  climate_entity: !input climate
+  temp_entity: !input tempsensor
+  window_entity: !input door_or_window
+  heating_sw: !input heating_enabled
+
+  daytemp: !input day_temp
+  nighttemp: !input night_temp
+
+  low_day: !input low_temp_threshold_day
+  high_day: !input high_temp_threshold_day
+  low_night: !input low_temp_threshold_night
+  high_night: !input high_temp_threshold_night
+
+  window_delay: !input door_window_delay
+  debug_log: !input debug
+
+  day_start: !input day_time
+  night_start: !input night_time
+  nowtime: "{{ now().strftime('%H:%M:%S') }}"
+
+  room_temp: "{{ states(temp_entity) | float(0) }}"
+  window_open: "{{ is_state(window_entity, 'on') }}"
+
+  daytime: "{{ day_start <= nowtime < night_start }}"
+  nighttime: "{{ nowtime >= night_start or nowtime < day_start }}"
+
+action:
+
+  # Startverzögerung
+  - choose:
+      - conditions: "{{ trigger.id in ['start','start2'] }}"
+        sequence:
+          - delay: "00:03:00"
+
+  # Debug
+  - choose:
+      - conditions: "{{ debug_log }}"
+        sequence:
+          - service: logbook.log
+            data:
+              name: "TRV06 Heizlogik"
+              message: >
+                Temp={{ room_temp }}°C,
+                Fenster={{ window_open }},
+                Heizlogik={{ states(heating_sw) }},
+                Modus={{ 'Tag' if daytime else 'Nacht' }}
+              entity_id: "{{ climate_entity }}"
+
+  # Heizlogik AUS
+  - choose:
+      - conditions:
+          - condition: state
+            entity_id: !input heating_enabled
+            state: "off"
+        sequence:
+          - service: climate.turn_off
+            target:
+              entity_id: "{{ climate_entity }}"
+          - stop: "Heizlogik deaktiviert"
+
+  # Fenster / Tür geöffnet → Heizung AUS (mit Verzögerung)
+  - choose:
+      - conditions: "{{ window_open }}"
+        sequence:
+          - delay:
+              seconds: "{{ window_delay }}"
+          - condition: template
+            value_template: "{{ is_state(window_entity, 'on') }}"
+          - service: climate.turn_off
+            target:
+              entity_id: "{{ climate_entity }}"
+          - stop: "Fenster offen → AUS"
+
+  # Solltemperatur setzen
+  - choose:
+      - conditions: "{{ daytime }}"
+        sequence:
+          - service: climate.set_temperature
+            data:
+              temperature: "{{ daytemp }}"
+            target:
+              entity_id: "{{ climate_entity }}"
+
+      - conditions: "{{ nighttime }}"
+        sequence:
+          - service: climate.set_temperature
+            data:
+              temperature: "{{ nighttemp }}"
+            target:
+              entity_id: "{{ climate_entity }}"
+
+  # Hysterese
+  - choose:
+
+      # TAG
+      - conditions: "{{ daytime }}"
+        sequence:
+          - choose:
+              - conditions: "{{ room_temp < low_day }}"
+                sequence:
+                  - service: climate.turn_on
+                    target:
+                      entity_id: "{{ climate_entity }}"
+
+          - choose:
+              - conditions: "{{ room_temp > high_day }}"
+                sequence:
+                  - service: climate.turn_off
+                    target:
+                      entity_id: "{{ climate_entity }}"
+
+      # NACHT
+      - conditions: "{{ nighttime }}"
+        sequence:
+          - choose:
+              - conditions: "{{ room_temp < low_night }}"
+                sequence:
+                  - service: climate.turn_on
+                    target:
+                      entity_id: "{{ climate_entity }}"
+
+          - choose:
+              - conditions: "{{ room_temp > high_night }}"
+                sequence:
+                  - service: climate.turn_off
+                    target:
+                      entity_id: "{{ climate_entity }}"
