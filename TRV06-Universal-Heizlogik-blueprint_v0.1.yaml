@@ -9,6 +9,7 @@ blueprint:
     - Temperatur = 5°C bevor OFF (echtes Abschalten)
     - Sicher gegen unknown/unavailable
     - Debug optional
+    - Setzt Solltemperatur NUR wenn Heizung NICHT gleich ausgeht
 
   domain: automation
 
@@ -162,7 +163,6 @@ variables:
   night_start: !input night_time
   nowtime: "{{ now().strftime('%H:%M:%S') }}"
 
-  # Sicher gegen unknown/unavailable
   room_temp: >
     {% if states(temp_entity) in ['unknown','unavailable','None','nan'] %}
       999
@@ -171,7 +171,6 @@ variables:
     {% endif %}
 
   window_open: "{{ is_state(window_entity, 'on') }}"
-
   daytime: "{{ day_start <= nowtime < night_start }}"
   nighttime: "{{ nowtime >= night_start or nowtime < day_start }}"
 
@@ -197,7 +196,7 @@ action:
                 Modus={{ 'Tag' if daytime else 'Nacht' }}
               entity_id: "{{ climate_entity }}"
 
-  # Heizlogik AUS → Temperatur = 5° → OFF
+  # Heizlogik AUS
   - choose:
       - conditions:
           - condition: state
@@ -205,20 +204,17 @@ action:
             state: "off"
         sequence:
           - service: climate.set_temperature
-            data:
-              temperature: 5
-            target:
-              entity_id: "{{ climate_entity }}"
+            data: { temperature: 5 }
+            target: { entity_id: "{{ climate_entity }}" }
 
           - delay: "00:00:02"
 
           - service: climate.turn_off
-            target:
-              entity_id: "{{ climate_entity }}"
+            target: { entity_id: "{{ climate_entity }}" }
 
           - stop: "Heizlogik deaktiviert"
 
-  # Fenster offen → 5° → OFF
+  # Fenster offen
   - choose:
       - conditions: "{{ window_open }}"
         sequence:
@@ -229,36 +225,33 @@ action:
             value_template: "{{ is_state(window_entity, 'on') }}"
 
           - service: climate.set_temperature
-            data:
-              temperature: 5
-            target:
-              entity_id: "{{ climate_entity }}"
+            data: { temperature: 5 }
+            target: { entity_id: "{{ climate_entity }}" }
 
           - delay: "00:00:02"
 
           - service: climate.turn_off
-            target:
-              entity_id: "{{ climate_entity }}"
+            target: { entity_id: "{{ climate_entity }}" }
 
           - stop: "Fenster offen → AUS"
 
-  # Solltemperatur setzen (immer vor Hysterese)
-  - choose:
-      - conditions: "{{ daytime }}"
-        sequence:
-          - service: climate.set_temperature
-            data:
-              temperature: "{{ daytemp }}"
-            target:
-              entity_id: "{{ climate_entity }}"
+  #
+  # *** KEINE unnötige Solltemperatur setzen ***
+  # Nur setzen, wenn die Hysterese NICHT direkt abschaltet!
+  #
 
-      - conditions: "{{ nighttime }}"
+  - choose:
+      - conditions: "{{ daytime and not (room_temp > high_day) }}"
         sequence:
           - service: climate.set_temperature
-            data:
-              temperature: "{{ nighttemp }}"
-            target:
-              entity_id: "{{ climate_entity }}"
+            data: { temperature: "{{ daytemp }}" }
+            target: { entity_id: "{{ climate_entity }}" }
+
+      - conditions: "{{ nighttime and not (room_temp > high_night) }}"
+        sequence:
+          - service: climate.set_temperature
+            data: { temperature: "{{ nighttemp }}" }
+            target: { entity_id: "{{ climate_entity }}" }
 
   # Hysterese
   - choose:
@@ -272,24 +265,20 @@ action:
               - conditions: "{{ room_temp < low_day }}"
                 sequence:
                   - service: climate.turn_on
-                    target:
-                      entity_id: "{{ climate_entity }}"
+                    target: { entity_id: "{{ climate_entity }}" }
 
-          # AUS (mit 5° setzen!)
+          # AUS
           - choose:
               - conditions: "{{ room_temp > high_day }}"
                 sequence:
                   - service: climate.set_temperature
-                    data:
-                      temperature: 5
-                    target:
-                      entity_id: "{{ climate_entity }}"
+                    data: { temperature: 5 }
+                    target: { entity_id: "{{ climate_entity }}" }
 
                   - delay: "00:00:02"
 
                   - service: climate.turn_off
-                    target:
-                      entity_id: "{{ climate_entity }}"
+                    target: { entity_id: "{{ climate_entity }}" }
 
       # NACHT
       - conditions: "{{ nighttime }}"
@@ -300,21 +289,17 @@ action:
               - conditions: "{{ room_temp < low_night }}"
                 sequence:
                   - service: climate.turn_on
-                    target:
-                      entity_id: "{{ climate_entity }}"
+                    target: { entity_id: "{{ climate_entity }}" }
 
-          # AUS mit 5°
+          # AUS
           - choose:
               - conditions: "{{ room_temp > high_night }}"
                 sequence:
                   - service: climate.set_temperature
-                    data:
-                      temperature: 5
-                    target:
-                      entity_id: "{{ climate_entity }}"
+                    data: { temperature: 5 }
+                    target: { entity_id: "{{ climate_entity }}" }
 
                   - delay: "00:00:02"
 
                   - service: climate.turn_off
-                    target:
-                      entity_id: "{{ climate_entity }}"
+                    target: { entity_id: "{{ climate_entity }}" }
