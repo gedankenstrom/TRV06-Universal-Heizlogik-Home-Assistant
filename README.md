@@ -1,56 +1,96 @@
-# TRV06 Universal Heizlogik für Home-Assistant
-Universelle Heizlogik für TRV06 Thermostate in Home Assistant mit externer Temperaturregelung, Tag-/Nachtmodus, Hysterese, Fenstererkennung und vollständig einstellbaren Parametern. Kompatibel mit Home Assistant 2025.
-
-## 🔧 Eingaben & Optionen
-
-| Eingabe | Typ | Beschreibung |
-|---|---|---|
-| Thermostat | `climate` | Zu steuerndes Heiz-Thermostat |
-| Raumtemperatur-Sensor | `sensor` | Gelieferte Ist-Temperatur |
-| Tür-/Fenstersensor | `binary_sensor` | `on` = offen |
-| Heizlogik EIN/AUS | `input_boolean` | Master-Schalter |
-| Start TAG | `time` | Standard: 08:00 |
-| Start NACHT | `time` | Standard: 22:00 |
-| Tag-Temperatur | `number` | Sollwert bei Tag |
-| Nacht-Temperatur | `number` | Sollwert bei Nacht |
-| Tag – Einschalten unter | `number` | unter diesem Wert → Heizen EIN |
-| Tag – Ausschalten über | `number` | über diesem Wert → Heizen AUS |
-| Nacht – Einschalten unter | `number` | Nacht-Hysterese EIN |
-| Nacht – Ausschalten über | `number` | Nacht-Hysterese AUS |
-| Fensterverzögerung | `number` (Sek.) | Standard: 60 s |
-| Debug aktivieren | `boolean` | Log-Ausgabe aktivieren |
+# TRV06 – Dynamic Setpoint Heizlogik V3
+**Vollautomatische Heizlogik für Tuya/AVATTO TRV06 Thermostate**  
+Regelt mit externem Temperatursensor, verhindert Überhitzen, hält den Heizkörper gleichmäßig warm und integriert Fenster- sowie Tag/Nacht-Logik.
 
 ---
 
-## 🏁 Ablauf-Logik (Kurzfassung)
+## 🚀 Funktionen
 
-1. **Home Assistant startet → 3 min Delay**
-2. Wenn **Master AUS** → 5 °C + OFF + Stop
-3. Wenn **Fenster offen** → Delay → prüfen → 5 °C + OFF
-4. Wenn **Tag**:
-   - `room_temp < low_day` → ON → 3 s → Set Temp
-   - `room_temp > high_day` → 5 °C → OFF
-5. Wenn **Nacht**:
-   - `room_temp < low_night` → ON → 3 s → Set Temp
-   - `room_temp > high_night` → 5 °C → OFF
+### 🔥 Präzise Heizregelung über externen Sensor
+Der TRV06 regelt nicht über seine unzuverlässige interne Temperatur, sondern über einen externen Raumsensor. Dadurch wird eine viel genauere Raumtemperatur erreicht.
+
+### 🕒 Automatische Tag/Nacht-Temperaturen
+Einstellbare Tag- und Nachtzeiten mit eigenen Zieltemperaturen.
+
+### ♨️ Intelligente Betriebsmodi
+- **HEAT** – Aufheizen wenn Raum zu kalt  
+- **HOLD** – Warmhalten bei erreichter Zieltemperatur  
+- **COOL** – Abkühlen bei Überhitzung (verhindert Overshoot)
+
+### 🪟 Fenster-/Tür-Erkennung
+Verhindert Energieverlust:  
+Offenes Fenster → TRV wird nach einstellbarem Delay ausgeschaltet.
+
+### 🔌 Master EIN/AUS
+Globaler Schalter deaktiviert die gesamte Heizlogik.
+
+### 📊 Debug-Logging
+Optionale Ausgabe aller relevanten Zustände ins Logbook.
 
 ---
 
-## 📝 Hinweise
+## Entitäten eintragen:
 
-- Hysterese-Werte bewusst eng, aber stabil
-- funktioniert **ohne climate-mode-Wechsel**
-- keine Dauer-Trigger durch Restart-Schutz
-- sicher gegen `unknown` / `unavailable` Sensorwerte
+- TRV06 Thermostat
+- Externer Temp-Sensor
+- TRV interne Temperatur
+- Fenster-/Türkontakt
+- Input Boolean als Master-Schalter
 
 ---
 
-## ✅ Kompatibel mit
+## 🔧 Eingabeparameter
 
-- TRV06 Heizkörper-Thermostaten
-- allen Home Assistant `climate`-Geräten
-- Fenster-/Türsensoren (binary_sensor)
-- jeder Raum-Temperaturquelle (`sensor`)
+| Parameter | Typ | Beschreibung |
+|----------|-----|--------------|
+| **climate** | climate-Entity | Das gesteuerte TRV06-Thermostat. |
+| **room_temp_sensor** | sensor | Externer Raumtemperatursensor. |
+| **trv_internal_temp** | sensor | Interne TRV06-Temperatur. |
+| **window_sensor** | binary_sensor | Fenster-/Türkontakt. |
+| **heating_enabled** | input_boolean | Aktiviert / deaktiviert die Logik. |
+| **day_time** | time | Startzeit des Tag-Modus. |
+| **night_time** | time | Startzeit des Nacht-Modus. |
+| **day_set_temp** | number (°C) | Zieltemperatur am Tag. |
+| **night_set_temp** | number (°C) | Zieltemperatur in der Nacht. |
+| **hold_offset** | number (°C) | Offset für HOLD-Setpoint. |
+| **cool_offset** | number (°C) | Offset für COOL-Setpoint. |
+| **overshoot_margin** | number (°C) | Schutz gegen Überhitzen. |
+| **window_delay** | number (Sek.) | Verzögerung bei Fenster offen. |
+| **debug** | boolean | Debug Ausgaben aktivieren. |
 
+---
 
+## 🧮 Interne Variablen
+
+| Variable | Beschreibung | Berechnung |
+|----------|--------------|------------|
+| **nowtime** | Aktuelle Uhrzeit | `now().strftime('%H:%M:%S')` |
+| **room_temp** | Aktuelle Raumtemperatur | `states(room_temp) | float(999)` |
+| **trv_internal** | Interne TRV-Temp | `states(trv_temp) | float(20)` |
+| **daytime** | Tag/Nacht aktiv? | `day_start <= nowtime < night_start` |
+| **target_temp** | Dynamische Zieltemperatur | `day_set if daytime else night_set` |
+| **hold_setpoint** | Warmhalten | `trv_internal + hold_offset` |
+| **cool_setpoint** | Abkühlen | `trv_internal + cool_offset` |
+| **window_open** | Fensterstatus | `is_state(window_sensor, 'on')` |
+
+---
+
+## ⚙️ Funktionslogik
+
+| Modus | Bedingung | Aktion |
+|-------|-----------|--------|
+| **HEAT** | Raumtemp < Zieltemp | TRV auf Zieltemp setzen |
+| **HOLD** | Ziel erreicht | TRV leicht über interne Temp (warm halten) |
+| **COOL** | Raum über Ziel + Margin | TRV leicht unter interner Temp (abkühlen) |
+| **FENSTER OFFEN** | Fenster offen | TRV → 5°C + OFF |
+| **MASTER OFF** | Master=Off | TRV → 5°C + OFF |
+
+---
+
+## 💡 Tipps zur Nutzung
+
+- **hold_offset = 1.0–1.5** ergibt sehr angenehmes, weiches Heizverhalten.  
+- **cool_offset = –2 bis –3** verhindert effektiv Überhitzen.  
+- Für maximale Präzision sollte der externe Sensor **nicht zu nah am Heizkörper** hängen.  
+- Debug-Logging hilft, den Ablauf der Regelung nachzuvollziehen.
 
