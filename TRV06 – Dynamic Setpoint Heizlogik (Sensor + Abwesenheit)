@@ -1,0 +1,360 @@
+blueprint:
+  name: TRV06 – Dynamic Setpoint Heizlogik (Sensor + Abwesenheit)
+  description: >
+    Dynamische Heizlogik für AVATTO TRV06.
+    Nutzt externen Raumsensor, TRV-Offsets, einstellbare Tag/Nacht-Zeiten,
+    Fenster-Offen-Logik, globale Abwesenheit (input_boolean),
+    optionale Raum-Abwesenheit (input_boolean) und Debug-Logging.
+
+  domain: automation
+
+  input:
+
+    # ---------------------------------------------------------
+    # Grund-Entitäten
+    # ---------------------------------------------------------
+    climate:
+      name: Thermostat
+      description: TRV06 climate.xxx Entity
+      selector:
+        entity:
+          domain: climate
+
+    room_temp_sensor:
+      name: Externer Raumtemperatursensor
+      description: Gemessene Raumtemperatur (z. B. Gruppensensor).
+      selector:
+        entity:
+          domain: sensor
+
+    trv_internal_temp:
+      name: TRV interne Temperatur
+      description: Interne Ventiltemperatur des TRV06.
+      selector:
+        entity:
+          domain: sensor
+
+    window_sensor:
+      name: Fenster-/Türkontakt
+      description: Bei offenem Fenster wird die Heizung nach Delay ausgeschaltet.
+      selector:
+        entity:
+          domain: binary_sensor
+
+    heating_enabled:
+      name: Master EIN/AUS
+      description: Gesamte Heizlogik an/aus (input_boolean).
+      selector:
+        entity:
+          domain: input_boolean
+
+    # ---------------------------------------------------------
+    # Tag-/Nacht-Konfiguration
+    # ---------------------------------------------------------
+    day_start_time:
+      name: Start Tag
+      description: Uhrzeit, ab der Tag-Solltemperatur gilt.
+      default: "08:00:00"
+      selector:
+        time: {}
+
+    night_start_time:
+      name: Start Nacht
+      description: Uhrzeit, ab der Nacht-Solltemperatur gilt.
+      default: "22:00:00"
+      selector:
+        time: {}
+
+    day_set_temp:
+      name: Tag-Solltemperatur (°C)
+      description: Wunschtemperatur tagsüber.
+      default: 22
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.1
+
+    night_set_temp:
+      name: Nacht-Solltemperatur (°C)
+      description: Wunschtemperatur nachts.
+      default: 18
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.1
+
+    # ---------------------------------------------------------
+    # Offsets (immer in °C)
+    # ---------------------------------------------------------
+    hold_offset:
+      name: HOLD Offset (°C)
+      description: >
+        Temperatur über TRV-intern, um die aktuelle Raumtemperatur zu halten.
+        Beispiel: TRV=20°C + HOLD=1°C → Setpoint 21°C.
+      default: 1
+      selector:
+        number:
+          min: -5
+          max: 5
+          step: 0.1
+
+    cool_offset:
+      name: COOL Offset (°C)
+      description: >
+        Temperatur unter TRV-intern, um leicht abzukühlen.
+      default: -1
+      selector:
+        number:
+          min: -10
+          max: 5
+          step: 0.1
+
+    overshoot_margin:
+      name: Overshoot-Marge (°C)
+      description: >
+        Bereich über der Zieltemperatur, ab dem auf COOL umgeschaltet wird.
+      default: 0.1
+      selector:
+        number:
+          min: 0
+          max: 2
+          step: 0.1
+
+    # ---------------------------------------------------------
+    # Fenster
+    # ---------------------------------------------------------
+    window_delay_seconds:
+      name: Fenster-Verzögerung (Sekunden)
+      description: >
+        Wartezeit, bevor bei offenem Fenster auf 5°C + AUS gestellt wird.
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 900
+          step: 5
+
+    # ---------------------------------------------------------
+    # Globale Abwesenheit
+    # ---------------------------------------------------------
+    away_mode:
+      name: Globaler Abwesenheitsschalter
+      description: input_boolean für Wohnung abwesend (z. B. input_boolean.wohnung_abwesend).
+      selector:
+        entity:
+          domain: input_boolean
+
+    away_offset:
+      name: Globale Absenkung (°C)
+      description: Absenkung der Zieltemperatur bei globaler Abwesenheit.
+      default: 2
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 0.5
+
+    # ---------------------------------------------------------
+    # Raum-Abwesenheit (Helfer-basiert)
+    # ---------------------------------------------------------
+    room_away_mode:
+      name: Raum-Abwesenheit Schalter
+      description: input_boolean für lokalen Raum-Abwesend (z. B. input_boolean.buro_away).
+      selector:
+        entity:
+          domain: input_boolean
+
+    room_away_offset:
+      name: Room-Away Absenkung (°C)
+      description: Zusätzliche Absenkung, wenn NUR der Raum abwesend ist.
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.1
+
+    # ---------------------------------------------------------
+    # Debug
+    # ---------------------------------------------------------
+    debug:
+      name: Debug aktivieren?
+      description: Schreibt die komplette Entscheidungslogik ins Logbuch.
+      default: false
+      selector:
+        boolean: {}
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  - platform: state
+    entity_id: !input room_temp_sensor
+  - platform: state
+    entity_id: !input trv_internal_temp
+  - platform: state
+    entity_id: !input window_sensor
+  - platform: state
+    entity_id: !input heating_enabled
+  - platform: state
+    entity_id: !input away_mode
+  - platform: state
+    entity_id: !input room_away_mode
+  - platform: time
+    at: !input day_start_time
+  - platform: time
+    at: !input night_start_time
+
+variables:
+  climate_entity: !input climate
+  room_temp_entity: !input room_temp_sensor
+  trv_temp_entity: !input trv_internal_temp
+  window_entity: !input window_sensor
+
+  day_start: !input day_start_time
+  night_start: !input night_start_time
+
+  day_set: !input day_set_temp
+  night_set: !input night_set_temp
+
+  hold_offset: !input hold_offset
+  cool_offset: !input cool_offset
+  overshoot_margin: !input overshoot_margin
+
+  window_delay_seconds: !input window_delay_seconds
+
+  away_sw: !input away_mode
+  room_away_sw: !input room_away_mode
+
+  away_offset_val: !input away_offset
+  room_away_offset_val: !input room_away_offset
+
+  debug_log: !input debug
+
+  nowtime: "{{ now().strftime('%H:%M:%S') }}"
+  room_temp: "{{ states(room_temp_entity) | float(999) }}"
+  trv_internal: "{{ states(trv_temp_entity) | float(20) }}"
+  daytime: "{{ day_start <= nowtime < night_start }}"
+
+  global_away: "{{ is_state(away_sw, 'on') }}"
+  room_away: "{{ is_state(room_away_sw, 'on') }}"
+
+  base_target: "{{ (day_set if daytime else night_set) | float }}"
+
+  target_temp: >
+    {% set t = base_target %}
+    {% if global_away %}
+      {% set t = t - away_offset_val %}
+    {% endif %}
+    {% if room_away %}
+      {% set t = t - room_away_offset_val %}
+    {% endif %}
+    {{ t | round(1) }}
+
+  hold_setpoint: "{{ (trv_internal + hold_offset) | round(1) }}"
+  cool_setpoint: "{{ (trv_internal + cool_offset) | round(1) }}"
+  window_open: "{{ is_state(window_entity, 'on') }}"
+
+action:
+
+  # ---------------------------------------------------------
+  # DEBUG
+  # ---------------------------------------------------------
+  - choose:
+      - conditions: "{{ debug_log }}"
+        sequence:
+          - service: logbook.log
+            data:
+              name: "TRV06 Heizlogik"
+              message: >
+                Room={{ room_temp }} TRV={{ trv_internal }}
+                Target={{ target_temp }} HOLD={{ hold_setpoint }}
+                COOL={{ cool_setpoint }}
+                GlobalAway={{ global_away }} RoomAway={{ room_away }}
+                Time={{ nowtime }}
+
+  # ---------------------------------------------------------
+  # MASTER OFF
+  # ---------------------------------------------------------
+  - choose:
+      - conditions:
+          - condition: state
+            entity_id: !input heating_enabled
+            state: "off"
+        sequence:
+          - service: climate.set_temperature
+            target:
+              entity_id: !input climate
+            data:
+              temperature: 5
+          - delay: "00:00:02"
+          - service: climate.turn_off
+            target:
+              entity_id: !input climate
+          - stop: "MASTER OFF"
+
+  # ---------------------------------------------------------
+  # FENSTER OFFEN
+  # ---------------------------------------------------------
+  - choose:
+      - conditions: "{{ window_open }}"
+        sequence:
+          - delay:
+              seconds: "{{ window_delay_seconds }}"
+          - condition: template
+            value_template: "{{ is_state(window_entity, 'on') }}"
+          - service: climate.set_temperature
+            target:
+              entity_id: !input climate
+            data:
+              temperature: 5
+          - delay: "00:00:02"
+          - service: climate.turn_off
+            target:
+              entity_id: !input climate
+          - stop: "FENSTER OFFEN"
+
+  # ---------------------------------------------------------
+  # NORMALBETRIEB – Dynamic Setpoint
+  # ---------------------------------------------------------
+  - choose:
+
+      # HEIZEN – Raum unter Ziel
+      - conditions: "{{ room_temp < target_temp }}"
+        sequence:
+          - service: climate.turn_on
+            target:
+              entity_id: !input climate
+          - service: climate.set_temperature
+            target:
+              entity_id: !input climate
+            data:
+              temperature: "{{ target_temp }}"
+
+      # HALTEN – im Overshoot-Bereich
+      - conditions: >
+          {{ room_temp >= target_temp
+             and room_temp < (target_temp + overshoot_margin) }}
+        sequence:
+          - service: climate.turn_on
+            target:
+              entity_id: !input climate
+          - service: climate.set_temperature
+            target:
+              entity_id: !input climate
+            data:
+              temperature: "{{ hold_setpoint }}"
+
+      # COOL – deutlich über Ziel
+      - conditions: "{{ room_temp >= (target_temp + overshoot_margin) }}"
+        sequence:
+          - service: climate.turn_on
+            target:
+              entity_id: !input climate
+          - service: climate.set_temperature
+            target:
+              entity_id: !input climate
+            data:
+              temperature: "{{ cool_setpoint }}"
