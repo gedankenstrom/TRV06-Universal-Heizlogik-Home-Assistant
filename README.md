@@ -1,96 +1,144 @@
-# TRV06 – Dynamic Setpoint Heizlogik V3
-**Vollautomatische Heizlogik für Tuya/AVATTO TRV06 Thermostate**  
-Regelt mit externem Temperatursensor, verhindert Überhitzen, hält den Heizkörper gleichmäßig warm und integriert Fenster- sowie Tag/Nacht-Logik.
+# TRV06 – Dynamic Setpoint Heizlogik (Sensor + Abwesenheit)
+
+Diese Blueprint-Automatisierung für Home Assistant bietet eine vollständig dynamische Heizlogik für das AVATTO TRV06.  
+Sie nutzt externe Temperatursensoren, Abwesenheitsmodi, Fensterkontakte sowie intelligente Offsets, um präzise und effiziente Heizungssteuerung zu ermöglichen.
 
 ---
 
 ## 🚀 Funktionen
 
-### 🔥 Präzise Heizregelung über externen Sensor
-Der TRV06 regelt nicht über seine unzuverlässige interne Temperatur, sondern über einen externen Raumsensor. Dadurch wird eine viel genauere Raumtemperatur erreicht.
-
-### 🕒 Automatische Tag/Nacht-Temperaturen
-Einstellbare Tag- und Nachtzeiten mit eigenen Zieltemperaturen.
-
-### ♨️ Intelligente Betriebsmodi
-- **HEAT** – Aufheizen wenn Raum zu kalt  
-- **HOLD** – Warmhalten bei erreichter Zieltemperatur  
-- **COOL** – Abkühlen bei Überhitzung (verhindert Overshoot)
-
-### 🪟 Fenster-/Tür-Erkennung
-Verhindert Energieverlust:  
-Offenes Fenster → TRV wird nach einstellbarem Delay ausgeschaltet.
-
-### 🔌 Master EIN/AUS
-Globaler Schalter deaktiviert die gesamte Heizlogik.
-
-### 📊 Debug-Logging
-Optionale Ausgabe aller relevanten Zustände ins Logbook.
+- Dynamische Setpoint-Berechnung basierend auf realer Raumtemperatur  
+- Tag-/Nacht-Modus mit individuellen Solltemperaturen  
+- HOLD- und COOL-Offsets zur Vermeidung von Overshoot  
+- Fenster-Offen-Logik mit Verzögerung  
+- **Globaler & Raum-spezifischer Abwesenheitsmodus (eigene Schalter erforderlich!)**  
+- Kompatibel für Multiroom-Szenarien  
+- Optionales Debug-Logging aller Entscheidungen
 
 ---
 
-## Entitäten eintragen:
+## ⚠️ WICHTIG: Abwesenheitsschalter & Automationen
 
-- TRV06 Thermostat
-- Externer Temp-Sensor
-- TRV interne Temperatur
-- Fenster-/Türkontakt
-- Input Boolean als Master-Schalter
+Damit die Heizlogik korrekt arbeiten kann, müssen **zwei Arten von Abwesenheitsschaltern im Home Assistant angelegt werden**:
 
----
+### **1. Globaler Abwesenheits-Schalter (`input_boolean`)**
+Beispiel:  
+- `input_boolean.wohnung_abwesend`
 
-## 🔧 Eingabeparameter
+Dieser Schalter dient als *globaler Zustand* deiner Wohnung.  
+Der Blueprint senkt die Zieltemperatur ab, sobald dieser Schalter auf **ON** steht.
 
-| Parameter | Typ | Beschreibung |
-|----------|-----|--------------|
-| **climate** | climate-Entity | Das gesteuerte TRV06-Thermostat. |
-| **room_temp_sensor** | sensor | Externer Raumtemperatursensor. |
-| **trv_internal_temp** | sensor | Interne TRV06-Temperatur. |
-| **window_sensor** | binary_sensor | Fenster-/Türkontakt. |
-| **heating_enabled** | input_boolean | Aktiviert / deaktiviert die Logik. |
-| **day_time** | time | Startzeit des Tag-Modus. |
-| **night_time** | time | Startzeit des Nacht-Modus. |
-| **day_set_temp** | number (°C) | Zieltemperatur am Tag. |
-| **night_set_temp** | number (°C) | Zieltemperatur in der Nacht. |
-| **hold_offset** | number (°C) | Offset für HOLD-Setpoint. |
-| **cool_offset** | number (°C) | Offset für COOL-Setpoint. |
-| **overshoot_margin** | number (°C) | Schutz gegen Überhitzen. |
-| **window_delay** | number (Sek.) | Verzögerung bei Fenster offen. |
-| **debug** | boolean | Debug Ausgaben aktivieren. |
+Typische Automationen:
+- **Anwesenheitserkennung per Smartphone**  
+- **Alle Personen weg → Abwesenheit ON**  
+- **Jemand kommt heim → Abwesenheit OFF**
 
----
+### **2. Raum-spezifischer Abwesenheits-Schalter (`input_boolean`)**
+Beispiel:  
+- `input_boolean.buero_away`  
+- `input_boolean.schlafzimmer_away`
 
-## 🧮 Interne Variablen
+Damit kann jeder Raum individuell abgesenkt werden – unabhängig von der globalen Abwesenheit.
 
-| Variable | Beschreibung | Berechnung |
-|----------|--------------|------------|
-| **nowtime** | Aktuelle Uhrzeit | `now().strftime('%H:%M:%S')` |
-| **room_temp** | Aktuelle Raumtemperatur | `states(room_temp) | float(999)` |
-| **trv_internal** | Interne TRV-Temp | `states(trv_temp) | float(20)` |
-| **daytime** | Tag/Nacht aktiv? | `day_start <= nowtime < night_start` |
-| **target_temp** | Dynamische Zieltemperatur | `day_set if daytime else night_set` |
-| **hold_setpoint** | Warmhalten | `trv_internal + hold_offset` |
-| **cool_setpoint** | Abkühlen | `trv_internal + cool_offset` |
-| **window_open** | Fensterstatus | `is_state(window_sensor, 'on')` |
+Typische Automationen:
+- Raum wird lange nicht betreten → Raum-Abwesenheit ON  
+- Bewegung im Raum → Raum-Abwesenheit OFF  
+- Zeitbasierte Reduktion (z. B. tagsüber im Schlafzimmer)
+
+Ohne diese Schalter arbeitet der Blueprint **nicht vollständig**, also unbedingt anlegen!
 
 ---
 
-## ⚙️ Funktionslogik
+## 🧩 Eingabeparameter / Konfiguration
 
-| Modus | Bedingung | Aktion |
-|-------|-----------|--------|
-| **HEAT** | Raumtemp < Zieltemp | TRV auf Zieltemp setzen |
-| **HOLD** | Ziel erreicht | TRV leicht über interne Temp (warm halten) |
-| **COOL** | Raum über Ziel + Margin | TRV leicht unter interner Temp (abkühlen) |
-| **FENSTER OFFEN** | Fenster offen | TRV → 5°C + OFF |
-| **MASTER OFF** | Master=Off | TRV → 5°C + OFF |
+| Kategorie | Parameter | Beschreibung |
+|----------|-----------|--------------|
+| **Grund-Entitäten** | Thermostat (climate) | TRV06 Climate-Entity |
+| | Externer Raumtemperatursensor | Misst reale Raumtemperatur |
+| | TRV interne Temperatur | Sensorwert des TRV06 |
+| | Fenster-/Türkontakt | Schaltet Heizung bei offenem Fenster ab |
+| | Master EIN/AUS | Aktiviert/Deaktiviert die gesamte Logik |
+| **Tag/Nacht-Zeiten** | Start Tag | Uhrzeit für Tagbetrieb |
+| | Start Nacht | Uhrzeit für Nachtbetrieb |
+| | Tag-Solltemperatur | Zieltemperatur tagsüber |
+| | Nacht-Solltemperatur | Zieltemperatur nachts |
+| **Offsets** | HOLD Offset | TRV Setpoint zum Halten |
+| | COOL Offset | TRV Setpoint zum Abkühlen |
+| | Overshoot-Marge | Bereich über Zieltemperatur |
+| **Fensterlogik** | Fenster-Verzögerung | Zeit bis zum Abschalten |
+| **Globale Abwesenheit** | Away Mode | input_boolean für Abwesenheit |
+| | Away Offset | Absenkung bei globaler Abwesenheit |
+| **Raum-Abwesenheit** | Room Away Mode | Raum-spezifischer Abwesenheitsschalter |
+| | Room Away Offset | Zusätzliche Absenkung |
+| **Debug** | Debug aktivieren | Loggt alle Berechnungen |
 
 ---
 
-## 💡 Tipps zur Nutzung
+## 🔥 Funktionsübersicht
 
-- **hold_offset = 1.0–1.5** ergibt sehr angenehmes, weiches Heizverhalten.  
-- **cool_offset = –2 bis –3** verhindert effektiv Überhitzen.  
-- Für maximale Präzision sollte der externe Sensor **nicht zu nah am Heizkörper** hängen.  
-- Debug-Logging hilft, den Ablauf der Regelung nachzuvollziehen.
+### **1. Master OFF**
+Wenn der Master-Schalter deaktiviert ist:  
+→ Setzt TRV auf **5°C** und schaltet es aus.
 
+---
+
+### **2. Fenster offen**
+Wenn Fenster geöffnet wird:
+
+1. Warten (Fenster-Verzögerungszeit)  
+2. Erneute Prüfung  
+3. TRV auf **5°C** → Thermostat AUS  
+
+---
+
+### **3. Normalbetrieb – Dynamische Setpoints**
+
+Der Algorithmus berechnet:
+
+- Zieltemperatur (Tag/Nacht + Abwesenheit)  
+- HOLD-Setpoint (intern + Offset)  
+- COOL-Setpoint (intern + Offset)
+
+| Bedingung | Aktion |
+|-----------|--------|
+| Raumtemp < Zieltemp | **HEIZEN** → Setpoint = target_temp |
+| Raumtemp zwischen Ziel & Overshoot | **HALTEN** → Setpoint = hold_setpoint |
+| Raumtemp > Ziel + Overshoot | **COOL** → Setpoint = cool_setpoint |
+
+---
+
+## 🧪 Debug-Modus
+
+Wenn aktiviert, schreibt die Automation Logeinträge mit:
+
+- Raumtemperatur  
+- TRV intern  
+- berechnete Zieltemperaturen  
+- aktiver Modus (HEAT / HOLD / COOL)  
+- Abwesenheit  
+- Zeitstempel  
+
+---
+
+## 📘 Beispielwerte
+
+| Einstellung | Beispiel |
+|------------|----------|
+| Tagtemperatur | 22°C |
+| Nachttemperatur | 18°C |
+| HOLD Offset | +1°C |
+| COOL Offset | –1°C |
+| Overshoot | 0.1°C |
+| Fenster Delay | 60s |
+
+---
+
+## 📄 Lizenz
+
+Frei verwendbar. Verbesserungen und Pull Requests sind willkommen!  
+
+---
+
+## ❤️ Support
+
+Wenn dir der Blueprint hilft, freue ich mich über ein ⭐ auf GitHub!
