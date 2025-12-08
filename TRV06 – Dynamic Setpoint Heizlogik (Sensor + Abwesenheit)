@@ -189,6 +189,7 @@ blueprint:
 mode: restart
 max_exceeded: silent
 
+
 trigger:
   - platform: state
     entity_id: !input room_temp_sensor
@@ -296,24 +297,34 @@ action:
           - stop: "MASTER OFF"
 
   # ---------------------------------------------------------
-  # FENSTER OFFEN
+  # FENSTER OFFEN – Optimierte Logik (unterbrechbarer Delay)
   # ---------------------------------------------------------
   - choose:
-      - conditions: "{{ window_open }}"
+      - conditions: "{{ is_state(window_entity, 'on') }}"
         sequence:
+
+          # Wir warten einstellbare Sekunden – aber abbrechbar,
+          # weil mode: restart aktiv ist.
           - delay:
               seconds: "{{ window_delay_seconds }}"
+
+          # Prüfen erneut – ist das Fenster immer noch offen?
           - condition: template
             value_template: "{{ is_state(window_entity, 'on') }}"
+
+          # Dann Heizung aus
           - service: climate.set_temperature
             target:
               entity_id: !input climate
             data:
               temperature: 5
+
           - delay: "00:00:02"
+
           - service: climate.turn_off
             target:
               entity_id: !input climate
+
           - stop: "FENSTER OFFEN"
 
   # ---------------------------------------------------------
