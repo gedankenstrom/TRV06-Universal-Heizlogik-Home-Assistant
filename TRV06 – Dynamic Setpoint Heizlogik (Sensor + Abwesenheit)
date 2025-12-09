@@ -1,10 +1,10 @@
 blueprint:
-  name: TRV06 – Dynamic Setpoint Heizlogik (Sensor + Abwesenheit)
+  name: TRV06 – Dynamic Setpoint Heizlogik (Sensor + Abwesenheit + Live-Status)
   description: >
     Dynamische Heizlogik für AVATTO TRV06.
     Nutzt externen Raumsensor, TRV-Offsets, einstellbare Tag/Nacht-Zeiten,
-    Fenster-Offen-Logik, globale Abwesenheit (input_boolean),
-    optionale Raum-Abwesenheit (input_boolean) und Debug-Logging.
+    Fenster-Offen-Logik, globale Abwesenheit, Raum-Abwesenheit,
+    LIVE Status-Ausgabe in einem input_text.
 
   domain: automation
 
@@ -47,6 +47,16 @@ blueprint:
       selector:
         entity:
           domain: input_boolean
+
+    # ---------------------------------------------------------
+    # Status-Ausgabe
+    # ---------------------------------------------------------
+    status_text:
+      name: Status-Textausgabe
+      description: input_text.xxx zum Schreiben des aktuellen Heizmodus.
+      selector:
+        entity:
+          domain: input_text
 
     # ---------------------------------------------------------
     # Tag-/Nacht-Konfiguration
@@ -141,7 +151,7 @@ blueprint:
     # ---------------------------------------------------------
     away_mode:
       name: Globaler Abwesenheitsschalter
-      description: input_boolean für Wohnung abwesend (z. B. input_boolean.wohnung_abwesend).
+      description: input_boolean für Wohnung abwesend.
       selector:
         entity:
           domain: input_boolean
@@ -157,18 +167,18 @@ blueprint:
           step: 0.5
 
     # ---------------------------------------------------------
-    # Raum-Abwesenheit (Helfer-basiert)
+    # Raum-Abwesenheit
     # ---------------------------------------------------------
     room_away_mode:
       name: Raum-Abwesenheit Schalter
-      description: input_boolean für lokalen Raum-Abwesend (z. B. input_boolean.buro_away).
+      description: input_boolean für lokalen Raum-Abwesend.
       selector:
         entity:
           domain: input_boolean
 
     room_away_offset:
       name: Room-Away Absenkung (°C)
-      description: Zusätzliche Absenkung, wenn NUR der Raum abwesend ist.
+      description: Zusätzliche Absenkung bei reiner Raum-Abwesenheit.
       default: 1
       selector:
         number:
@@ -186,10 +196,14 @@ blueprint:
       selector:
         boolean: {}
 
+
 mode: restart
 max_exceeded: silent
 
 
+# ---------------------------------------------------------
+# TRIGGER
+# ---------------------------------------------------------
 trigger:
   - platform: state
     entity_id: !input room_temp_sensor
@@ -208,11 +222,16 @@ trigger:
   - platform: time
     at: !input night_start_time
 
+
+# ---------------------------------------------------------
+# VARIABLES
+# ---------------------------------------------------------
 variables:
   climate_entity: !input climate
   room_temp_entity: !input room_temp_sensor
   trv_temp_entity: !input trv_internal_temp
   window_entity: !input window_sensor
+  status_entity: !input status_text
 
   day_start: !input day_start_time
   night_start: !input night_start_time
@@ -238,6 +257,7 @@ variables:
   room_temp: "{{ states(room_temp_entity) | float(999) }}"
   trv_internal: "{{ states(trv_temp_entity) | float(20) }}"
   daytime: "{{ day_start <= nowtime < night_start }}"
+  window_open: "{{ is_state(window_entity, 'on') }}"
 
   global_away: "{{ is_state(away_sw, 'on') }}"
   room_away: "{{ is_state(room_away_sw, 'on') }}"
@@ -246,22 +266,21 @@ variables:
 
   target_temp: >
     {% set t = base_target %}
-    {% if global_away %}
-      {% set t = t - away_offset_val %}
-    {% endif %}
-    {% if room_away %}
-      {% set t = t - room_away_offset_val %}
-    {% endif %}
+    {% if global_away %}{% set t = t - away_offset_val %}{% endif %}
+    {% if room_away %}{% set t = t - room_away_offset_val %}{% endif %}
     {{ t | round(1) }}
 
   hold_setpoint: "{{ (trv_internal + hold_offset) | round(1) }}"
   cool_setpoint: "{{ (trv_internal + cool_offset) | round(1) }}"
-  window_open: "{{ is_state(window_entity, 'on') }}"
 
+
+# ---------------------------------------------------------
+# ACTION
+# ---------------------------------------------------------
 action:
 
   # ---------------------------------------------------------
-  # DEBUG
+  # DEBUG (optional)
   # ---------------------------------------------------------
   - choose:
       - conditions: "{{ debug_log }}"
@@ -270,11 +289,12 @@ action:
             data:
               name: "TRV06 Heizlogik"
               message: >
-                Room={{ room_temp }} TRV={{ trv_internal }}
-                Target={{ target_temp }} HOLD={{ hold_setpoint }}
-                COOL={{ cool_setpoint }}
-                GlobalAway={{ global_away }} RoomAway={{ room_away }}
-                Time={{ nowtime }}
+                Raum={{ room_temp }}°C | TRV={{ trv_internal }}°C |
+                Ziel={{ target_temp }}°C | HOLD={{ hold_setpoint }}°C |
+                COOL={{ cool_setpoint }}°C |
+                Away={{ global_away }} | RoomAway={{ room_away }} |
+                Modus={{ 'Tag' if daytime else 'Nacht' }} |
+                Fenster={{ window_open }}
 
   # ---------------------------------------------------------
   # MASTER OFF
@@ -285,37 +305,45 @@ action:
             entity_id: !input heating_enabled
             state: "off"
         sequence:
+
           - service: climate.set_temperature
             target:
-              entity_id: !input climate
+              entity_id: "{{ climate_entity }}"
             data:
               temperature: 5
+
           - delay: "00:00:02"
+
           - service: climate.turn_off
             target:
-              entity_id: !input climate
+              entity_id: "{{ climate_entity }}"
+
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ status_entity }}"
+            data:
+              value: >
+                MASTER AUS – Raum {{ room_temp }}°C | Ziel {{ target_temp }}°C
+
           - stop: "MASTER OFF"
 
+
   # ---------------------------------------------------------
-  # FENSTER OFFEN – Optimierte Logik (unterbrechbarer Delay)
+  # FENSTER OFFEN
   # ---------------------------------------------------------
   - choose:
-      - conditions: "{{ is_state(window_entity, 'on') }}"
+      - conditions: "{{ window_open }}"
         sequence:
 
-          # Wir warten einstellbare Sekunden – aber abbrechbar,
-          # weil mode: restart aktiv ist.
           - delay:
               seconds: "{{ window_delay_seconds }}"
 
-          # Prüfen erneut – ist das Fenster immer noch offen?
           - condition: template
-            value_template: "{{ is_state(window_entity, 'on') }}"
+            value_template: "{{ is_state(window_entity,'on') }}"
 
-          # Dann Heizung aus
           - service: climate.set_temperature
             target:
-              entity_id: !input climate
+              entity_id: "{{ climate_entity }}"
             data:
               temperature: 5
 
@@ -323,49 +351,92 @@ action:
 
           - service: climate.turn_off
             target:
-              entity_id: !input climate
+              entity_id: "{{ climate_entity }}"
 
-          - stop: "FENSTER OFFEN"
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ status_entity }}"
+            data:
+              value: >
+                FENSTER OFFEN – Aus | Raum {{ room_temp }}°C
+
+          - stop: "WINDOW OPEN"
+
 
   # ---------------------------------------------------------
   # NORMALBETRIEB – Dynamic Setpoint
   # ---------------------------------------------------------
   - choose:
 
-      # HEIZEN – Raum unter Ziel
+      # -----------------------------------
+      # HEIZEN
+      # -----------------------------------
       - conditions: "{{ room_temp < target_temp }}"
         sequence:
+
           - service: climate.turn_on
             target:
-              entity_id: !input climate
+              entity_id: "{{ climate_entity }}"
+
           - service: climate.set_temperature
             target:
-              entity_id: !input climate
+              entity_id: "{{ climate_entity }}"
             data:
               temperature: "{{ target_temp }}"
 
-      # HALTEN – im Overshoot-Bereich
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ status_entity }}"
+            data:
+              value: >
+                HEIZEN – Ziel {{ target_temp }}°C | TRV {{ trv_internal }}°C
+
+
+      # -----------------------------------
+      # HALTEN
+      # -----------------------------------
       - conditions: >
-          {{ room_temp >= target_temp
-             and room_temp < (target_temp + overshoot_margin) }}
+          {{ room_temp >= target_temp and
+             room_temp < (target_temp + overshoot_margin) }}
         sequence:
+
           - service: climate.turn_on
             target:
-              entity_id: !input climate
+              entity_id: "{{ climate_entity }}"
+
           - service: climate.set_temperature
             target:
-              entity_id: !input climate
+              entity_id: "{{ climate_entity }}"
             data:
               temperature: "{{ hold_setpoint }}"
 
-      # COOL – deutlich über Ziel
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ status_entity }}"
+            data:
+              value: >
+                HALTEN – Ziel {{ target_temp }}°C | HOLD {{ hold_setpoint }}°C
+
+
+      # -----------------------------------
+      # ABKÜHLEN
+      # -----------------------------------
       - conditions: "{{ room_temp >= (target_temp + overshoot_margin) }}"
         sequence:
+
           - service: climate.turn_on
             target:
-              entity_id: !input climate
+              entity_id: "{{ climate_entity }}"
+
           - service: climate.set_temperature
             target:
-              entity_id: !input climate
+              entity_id: "{{ climate_entity }}"
             data:
               temperature: "{{ cool_setpoint }}"
+
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ status_entity }}"
+            data:
+              value: >
+                ABKÜHLEN – Ziel {{ target_temp }}°C | COOL {{ cool_setpoint }}°C
