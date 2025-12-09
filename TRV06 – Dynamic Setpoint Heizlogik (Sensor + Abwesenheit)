@@ -3,8 +3,8 @@ blueprint:
   description: >
     Dynamische Heizlogik für AVATTO TRV06.
     Nutzt externen Raumsensor, TRV-Offsets, einstellbare Tag/Nacht-Zeiten,
-    Fenster-Offen-Logik, globale Abwesenheit, Raum-Abwesenheit,
-    LIVE Status-Ausgabe in einem input_text.
+    Fenster-Offen-Logik, globale Abwesenheit, Raum-Abwesenheit
+    und jetzt zusätzlich: LIVE Status-Ausgabe in einem input_text.
 
   domain: automation
 
@@ -323,7 +323,7 @@ action:
               entity_id: "{{ status_entity }}"
             data:
               value: >
-                MASTER AUS – Raum {{ room_temp }}°C | Ziel {{ target_temp }}°C
+                 AUS – Master OFF
 
           - stop: "MASTER OFF"
 
@@ -358,7 +358,7 @@ action:
               entity_id: "{{ status_entity }}"
             data:
               value: >
-                FENSTER OFFEN – Aus | Raum {{ room_temp }}°C
+                AUS – Fenster/Tür offen
 
           - stop: "WINDOW OPEN"
 
@@ -389,7 +389,7 @@ action:
               entity_id: "{{ status_entity }}"
             data:
               value: >
-                HEIZEN – Ziel {{ target_temp }}°C | TRV {{ trv_internal }}°C
+                HEIZEN – {{ target_temp }}°C (bis {{ target_temp }}°C)
 
 
       # -----------------------------------
@@ -415,7 +415,7 @@ action:
               entity_id: "{{ status_entity }}"
             data:
               value: >
-                HALTEN – Ziel {{ target_temp }}°C | HOLD {{ hold_setpoint }}°C
+                HALTEN – {{ hold_setpoint }}°C (bis {{ (target_temp + overshoot_margin) | round(1) }}°C)
 
 
       # -----------------------------------
@@ -439,4 +439,4 @@ action:
               entity_id: "{{ status_entity }}"
             data:
               value: >
-                ABKÜHLEN – Ziel {{ target_temp }}°C | COOL {{ cool_setpoint }}°C
+                COOL – {{ cool_setpoint }}°C (ab {{ (target_temp + overshoot_margin) | round(1) }}°C)
