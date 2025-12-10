@@ -1,89 +1,83 @@
-# TRV06 – Dynamic Setpoint Heating Logic (Sensor + Away + Live Status)
+# 🚀 TRV06 – Dynamic Setpoint Heizlogik  
+### *Intelligente, sensorbasierte Heizungssteuerung für AVATTO TRV06 Thermostate (Home Assistant)*
 
-Dieser Home-Assistant-Blueprint bietet eine intelligente Heizlogik für das  
-**AVATTO TRV06 Thermostat**, basierend auf:
+[![Blueprint](https://img.shields.io/badge/Home%20Assistant-Blueprint-blue)]()  
+[![Version](https://img.shields.io/badge/Version-1.0.0-green)]()  
+[![Maintained](https://img.shields.io/badge/Maintained-yes-success)]()  
 
-- externen Temperatursensoren  
-- Tag-/Nachtprofil  
-- globaler & raumspezifischer Abwesenheit  
-- Fenster-Offen-Erkennung  
-- TRV-internen Temperatur-Offsets  
-- dynamischen Setpoints: **HEIZEN / HALTEN / COOL**  
-- Live-Statusausgabe in `input_text`
+Dieses Blueprint implementiert eine **vollautomatische Heizlogik** für AVATTO TRV06 Thermostate.  
+Es ersetzt die ungenaue TRV-Temperaturmessung durch *externe Sensorwerte*, berücksichtigt Fensterkontakte, Tageszeiten, Abwesenheit und erzeugt eine **Live-Statusanzeige** fürs Dashboard.
 
 ---
 
-## 🚀 Features
+## 🌟 Features
 
-### 🔥 Dynamischer Setpoint
-Automatische Entscheidung zwischen:
-- **HEIZEN** → Zieltemperatur erreichen  
-- **HALTEN** → Temperatur stabil halten  
-- **COOL** → leicht abkühlen, Overshoot vermeiden  
+### 🔥 Intelligente Temperaturregelung
+- Externer Raumtemperatursensor als **präzise Hauptquelle**  
+- TRV-interne Temperatur zur Berechnung dynamischer Offsets  
+- Automatische Betriebsmodi:
+  - **HEIZEN**  
+  - **HALTEN** (HOLD-Offset)  
+  - **COOL** (COOL-Offset)  
 
-### 🌗 Tag-/Nachtbetrieb  
-- Tagsüber: volle Regelung + Abwesenheit aktiv  
-- Nacht-Setpoint wirkt stabil und ohne Eingriffe
+### 🕒 Tag-/Nacht-Logik
+- Freie Startzeiten  
+- Eigene Zieltemperatur für Tag & Nacht  
 
-### 🧭 Anwesenheitslogik
-- **Global Away** (z. B. Wohnung verlassen)
-- **Room Away** (z. B. Raum längere Zeit unbenutzt)
+### 🚪 Fenster-Offen-Steuerung
+- Verzögerung einstellbar  
+- Danach: TRV auf **5°C** & **AUS**
 
-### 🪟 Fenster-Offen-Logik
-- Verzögerung konfigurierbar  
-- TRV schaltet auf 5°C + OFF  
-- Statusmeldung: `AUS – Fenster/Tür offen`
+### 🏠 Abwesenheit
+- Global-Away (gesamte Wohnung)  
+- Room-Away (nur Raum)  
+- Global-Away überschreibt Room-Away  
+- Absenkung nur tagsüber  
 
-### 📝 Live-Status
-Wird in `input_text` gespeichert, z. B.:
+### ⚙️ Master EIN/AUS
+- Globaler Override für das gesamte System  
 
-- `HEIZEN – 22.0°C`
-- `HALTEN – 21.0°C (bis 22.1°C)`
-- `COOL – 19.0°C (ab 22.1°C)`
-- `AUS – Master OFF`
-- `AUS – Fenster/Tür offen`
+### 📊 Live-Status
+Zustandsanzeige per `input_text`:
 
----
+HEIZEN • 22.0°C
+HALTEN • 20.8°C (bis 22.2°C)
+COOL • 19.0°C (ab 22.2°C)
+AUS • Fenster/Tür offen
+AUS • Master OFF
 
-## 🧩 Voraussetzungen
-
-| Typ | Beschreibung |
-|-----|--------------|
-| `climate.xxx` | Dein TRV06 |
-| Sensor | Raumtemperatur |
-| Sensor | TRV interne Temperatur |
-| `binary_sensor` | Fenster-/Türkontakt |
-| `input_boolean` | Globaler Away |
-| `input_boolean` | Raum-Away |
-| `input_boolean` | Master EIN/AUS |
-| `input_text` | Ausgabe des Live-Status |
+### 🐛 Debug-Modus
+Ausführliche Logbuch-Ausgaben zur Analyse.
 
 ---
 
-## 🧪 Debugging
+## 📥 Benötigte Entitäten
 
-Optionaler Debug-Modus loggt:
-
-- Raumtemperatur  
-- TRV-intern  
-- Zieltemperatur  
-- HOLD / COOL Setpoints  
-- Anwesenheitsstatus  
-- Zeitprofil (Tag/Nacht)  
-- Fensterstatus  
-
----
-
-## 📄 Changelog
-
-### **v1.0.0**
-- Erstes vollständiges Release  
-- Abwesenheit wirkt nur tagsüber  
-- Verbessertes COOL-Verhalten  
-- Überarbeitete Live-Statusausgabe  
-- Stabilere Setpoint-Berechnung  
+| Zweck | Typ | Beispiel |
+|-------|------|----------|
+| Thermostat | `climate` | AVATTO TRV06 |
+| Raumtemperatur | `sensor` | Zigbee/BLE Sensor |
+| TRV interne Temperatur | `sensor` | TRV06 internal |
+| Fensterkontakt | `binary_sensor` | Fenster/Tür |
+| Master EIN/AUS | `input_boolean` | heating_enabled |
+| Statusausgabe | `input_text` | heiz_status |
+| Global-Away | `input_boolean` | away_mode |
+| Room-Away | `input_boolean` | room_away |
 
 ---
 
-## ❤️ Support
-Wenn dir der Blueprint hilft, gib dem Projekt gerne ein ⭐ auf GitHub!
+## 🛠️ Changelog
+
+### v1.0.0
+- Erstveröffentlichung  
+- Volle Heizlogik + Fensterlogik  
+- HOLD / COOL Offsets  
+- Global-/Room-Away  
+- Live-Status  
+- Debug-Modus  
+
+---
+
+## 📄 Lizenz
+
+MIT License  
