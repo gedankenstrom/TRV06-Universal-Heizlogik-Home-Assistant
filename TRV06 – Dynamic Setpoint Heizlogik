@@ -1,71 +1,100 @@
 blueprint:
   name: TRV06 – Dynamic Setpoint Heizlogik (Sensor + Abwesenheit + Live-Status)
   description: >
-    Dynamische Heizlogik für AVATTO TRV06.
-    Nutzt externen Raumsensor, TRV-Offsets, einstellbare Tag/Nacht-Zeiten,
-    Fenster-Offen-Logik, globale Abwesenheit, Raum-Abwesenheit
-    und jetzt zusätzlich: LIVE Status-Ausgabe in einem input_text.
+    Komplett automatische Heizlogik für AVATTO TRV06 Thermostate.
+    Nutzt externe Temperatursensoren, TRV-Offsets, Tag/Nacht-Modus,
+    Fenster-Offen-Steuerung, globale Abwesenheit und lokale Raum-Abwesenheit.
+    Zusätzlich: Live-Statusausgabe im Dashboard.
+    Room-Away wird automatisch ignoriert, wenn Global-Away aktiv ist.
 
   domain: automation
 
   input:
 
+    ###########################################################################
+    # GRUND-ENTITÄTEN
+    ###########################################################################
+
     climate:
       name: Thermostat
-      description: TRV06 climate.xxx Entity
+      description: >
+        Climate-Entity des TRV06 (z. B. climate.schlafzimmer_thermostat).
+        Diese Entität wird vom Blueprint geregelt (Setpoint, Modus ON/OFF).
       selector:
         entity:
           domain: climate
 
     room_temp_sensor:
       name: Externer Raumtemperatursensor
-      description: Gemessene Raumtemperatur (z. B. Gruppensensor).
+      description: >
+        Sensor für die ECHTE Temperatur im Raum (z. B. Zigbee-Sensor).
+        Dieser Wert ist die Basis für die Heizlogik, da der TRV oft ungenau misst.
       selector:
         entity:
           domain: sensor
 
     trv_internal_temp:
       name: TRV interne Temperatur
-      description: Interne Ventiltemperatur des TRV06.
+      description: >
+        Vom Thermostat gemessene Temperatur direkt am Heizkörper.
+        Wird genutzt, um HOLD- und COOL-Offsets dynamisch zu berechnen.
       selector:
         entity:
           domain: sensor
 
     window_sensor:
       name: Fenster-/Türkontakt
-      description: Bei offenem Fenster wird die Heizung nach Delay ausgeschaltet.
+      description: >
+        Wird das Fenster geöffnet, schaltet die Logik erst nach X Sekunden auf 5°C
+        und dann AUS. Verhindert unnötiges Heizen während Lüften.
       selector:
         entity:
           domain: binary_sensor
 
     heating_enabled:
       name: Master EIN/AUS
-      description: Gesamte Heizlogik an/aus (input_boolean).
+      description: >
+        Globaler EIN/AUS-Schalter für die gesamte Heizlogik (input_boolean).
+        OFF = TRV wird auf 5°C gesetzt und ausgeschaltet.
       selector:
         entity:
           domain: input_boolean
 
     status_text:
       name: Status-Textausgabe
-      description: input_text.xxx zum Schreiben des aktuellen Heizmodus.
+      description: >
+        input_text.xxx, in den die Live-Statusnachricht geschrieben wird.  
+        Ideal für Dashboard-Karten (z. B. „HEIZEN – 22.0°C“).
       selector:
         entity:
           domain: input_text
 
+
+    ###########################################################################
+    # TAG-/NACHT-KONFIGURATION
+    ###########################################################################
+
     day_start_time:
       name: Start Tag
+      description: >
+        Ab dieser Uhrzeit gilt der Tag-Modus (z. B. 08:00).
       default: "08:00:00"
       selector:
         time: {}
 
     night_start_time:
       name: Start Nacht
+      description: >
+        Ab dieser Uhrzeit gilt der Nacht-Modus (z. B. 22:00).
       default: "22:00:00"
       selector:
         time: {}
 
     day_set_temp:
       name: Tag-Solltemperatur (°C)
+      description: >
+        Wunschtemperatur im Tag-Modus.  
+        Beispiel: 22°C.
       default: 22
       selector:
         number:
@@ -75,6 +104,9 @@ blueprint:
 
     night_set_temp:
       name: Nacht-Solltemperatur (°C)
+      description: >
+        Wunschtemperatur im Nacht-Modus.  
+        Beispiel: 18°C.
       default: 18
       selector:
         number:
@@ -82,8 +114,16 @@ blueprint:
           max: 30
           step: 0.1
 
+
+    ###########################################################################
+    # OFFSETS
+    ###########################################################################
+
     hold_offset:
       name: HOLD Offset (°C)
+      description: >
+        Wert, um den der TRV-Setpoint erhöht wird, um Temperatur zu HALTEN.  
+        Beispiel: TRV=20°C + HOLD=1°C → 21°C.
       default: 1
       selector:
         number:
@@ -93,6 +133,9 @@ blueprint:
 
     cool_offset:
       name: COOL Offset (°C)
+      description: >
+        Wert, um den der TRV-Setpoint gesenkt wird, wenn der Raum überhitzt.  
+        Beispiel: TRV=20°C + COOL=-1°C → 19°C.
       default: -1
       selector:
         number:
@@ -102,6 +145,9 @@ blueprint:
 
     overshoot_margin:
       name: Overshoot-Marge (°C)
+      description: >
+        Abstand zur Zieltemperatur, ab dem auf COOL gewechselt wird.
+        Beispiel: 0.2°C → COOL ab Zieltemp + 0.2°C.
       default: 0.1
       selector:
         number:
@@ -109,8 +155,15 @@ blueprint:
           max: 2
           step: 0.1
 
+
+    ###########################################################################
+    # FENSTER
+    ###########################################################################
+
     window_delay_seconds:
       name: Fenster-Verzögerung (Sekunden)
+      description: >
+        Zeit, die das Fenster geöffnet sein muss, bevor TRV auf 5°C und AUS geht.
       default: 60
       selector:
         number:
@@ -118,14 +171,24 @@ blueprint:
           max: 900
           step: 5
 
+
+    ###########################################################################
+    # ABWESENHEIT (GLOBAL UND RAUM)
+    ###########################################################################
+
     away_mode:
       name: Globaler Abwesenheitsschalter
+      description: >
+        input_boolean, das *die ganze Wohnung* als abwesend markiert.
+        Wenn aktiv: Room-Away wird ignoriert.
       selector:
         entity:
           domain: input_boolean
 
     away_offset:
       name: Globale Absenkung (°C)
+      description: >
+        Temperaturabsenkung bei globaler Abwesenheit – nur tagsüber wirksam.
       default: 2
       selector:
         number:
@@ -135,12 +198,18 @@ blueprint:
 
     room_away_mode:
       name: Raum-Abwesenheit Schalter
+      description: >
+        input_boolean für den *einzelnen Raum*.  
+        Wird ignoriert, wenn Global-Away aktiv ist!
       selector:
         entity:
           domain: input_boolean
 
     room_away_offset:
       name: Room-Away Absenkung (°C)
+      description: >
+        Lokale Absenkung bei Abwesenheit nur im Raum.  
+        Nur tagsüber aktiv. Wird deaktiviert, sobald Global-Away = ON.
       default: 1
       selector:
         number:
@@ -148,11 +217,23 @@ blueprint:
           max: 5
           step: 0.1
 
+
+    ###########################################################################
+    # DEBUG
+    ###########################################################################
+
     debug:
       name: Debug aktivieren?
+      description: >
+        Wenn eingeschaltet, wird die komplette Heizlogik ins Logbuch geschrieben.
       default: false
       selector:
         boolean: {}
+
+
+###############################################################################
+# TRIGGER
+###############################################################################
 
 mode: restart
 max_exceeded: silent
@@ -174,6 +255,11 @@ trigger:
     at: !input day_start_time
   - platform: time
     at: !input night_start_time
+
+
+###############################################################################
+# VARIABLES
+###############################################################################
 
 variables:
   climate_entity: !input climate
@@ -209,10 +295,19 @@ variables:
   window_open: "{{ is_state(window_entity, 'on') }}"
 
   global_away: "{{ is_state(away_sw, 'on') }}"
-  room_away: "{{ is_state(room_away_sw, 'on') }}"
+  room_away_raw: "{{ is_state(room_away_sw, 'on') }}"
+
+  # Room-Away wird ignoriert, wenn Global-Away aktiv ist
+  room_away: >
+    {% if global_away %}
+      false
+    {% else %}
+      {{ room_away_raw }}
+    {% endif %}
 
   base_target: "{{ (day_set if daytime else night_set) | float }}"
 
+  # Absenkung nur tagsüber
   target_temp: >
     {% set t = base_target %}
     {% if daytime %}
@@ -228,8 +323,14 @@ variables:
   hold_setpoint: "{{ (trv_internal + hold_offset) | round(1) }}"
   cool_setpoint: "{{ (trv_internal + cool_offset) | round(1) }}"
 
+
+###############################################################################
+# ACTIONS
+###############################################################################
+
 action:
 
+  # DEBUG
   - choose:
       - conditions: "{{ debug_log }}"
         sequence:
@@ -240,10 +341,12 @@ action:
                 Raum={{ room_temp }}°C | TRV={{ trv_internal }}°C |
                 Ziel={{ target_temp }}°C | HOLD={{ hold_setpoint }}°C |
                 COOL={{ cool_setpoint }}°C |
-                Away={{ global_away }} | RoomAway={{ room_away }} |
-                Modus={{ 'Tag' if daytime else 'Nacht' }} |
+                GlobalAway={{ global_away }} | RoomAway={{ room_away }} |
+                Mode={{ 'Tag' if daytime else 'Nacht' }} |
                 Fenster={{ window_open }}
 
+
+  # MASTER OFF
   - choose:
       - conditions:
           - condition: state
@@ -262,17 +365,17 @@ action:
           - service: input_text.set_value
             target: { entity_id: "{{ status_entity }}" }
             data:
-              value: >
-                AUS – Master OFF
+              value: "AUS – Master OFF"
 
           - stop: "MASTER OFF"
 
+
+  # FENSTER OFFEN
   - choose:
       - conditions: "{{ window_open }}"
         sequence:
 
-          - delay:
-              seconds: "{{ window_delay_seconds }}"
+          - delay: { seconds: "{{ window_delay_seconds }}" }
 
           - condition: template
             value_template: "{{ is_state(window_entity,'on') }}"
@@ -289,13 +392,16 @@ action:
           - service: input_text.set_value
             target: { entity_id: "{{ status_entity }}" }
             data:
-              value: >
-                AUS – Fenster/Tür offen
+              value: "AUS – Fenster/Tür offen"
 
           - stop: "WINDOW OPEN"
 
+
+  # NORMALBETRIEB
+
   - choose:
 
+      # HEIZEN
       - conditions: "{{ room_temp < target_temp }}"
         sequence:
           - service: climate.turn_on
@@ -311,6 +417,7 @@ action:
               value: >
                 HEIZEN – {{ target_temp }}°C{% if daytime and (global_away or room_away) %} (Absenkung aktiv){% endif %}
 
+      # HALTEN
       - conditions: >
           {{ room_temp >= target_temp and
              room_temp < (target_temp + overshoot_margin) }}
@@ -328,6 +435,7 @@ action:
               value: >
                 HALTEN – {{ hold_setpoint }}°C (bis {{ (target_temp + overshoot_margin) | round(1) }}°C)
 
+      # COOL
       - conditions: "{{ room_temp >= (target_temp + overshoot_margin) }}"
         sequence:
           - service: climate.turn_on
