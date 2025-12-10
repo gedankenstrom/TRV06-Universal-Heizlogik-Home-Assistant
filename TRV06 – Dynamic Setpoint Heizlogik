@@ -365,7 +365,7 @@ action:
           - service: input_text.set_value
             target: { entity_id: "{{ status_entity }}" }
             data:
-              value: "AUS – Master OFF"
+              value: "AUS • Master OFF"
 
           - stop: "MASTER OFF"
 
@@ -392,7 +392,7 @@ action:
           - service: input_text.set_value
             target: { entity_id: "{{ status_entity }}" }
             data:
-              value: "AUS – Fenster/Tür offen"
+              value: "AUS • Fenster/Tür offen"
 
           - stop: "WINDOW OPEN"
 
@@ -415,7 +415,7 @@ action:
             target: { entity_id: "{{ status_entity }}" }
             data:
               value: >
-                HEIZEN – {{ target_temp }}°C{% if daytime and (global_away or room_away) %} (Absenkung aktiv){% endif %}
+                HEIZEN • {{ target_temp }} °C{% if daytime and (global_away or room_away) %} (Absenkung aktiv){% endif %}
 
       # HALTEN
       - conditions: >
@@ -433,7 +433,7 @@ action:
             target: { entity_id: "{{ status_entity }}" }
             data:
               value: >
-                HALTEN – {{ hold_setpoint }}°C (bis {{ (target_temp + overshoot_margin) | round(1) }}°C)
+                HALTEN • {{ hold_setpoint }} °C (bis {{ (target_temp + overshoot_margin) | round(1) }} °C)
 
       # COOL
       - conditions: "{{ room_temp >= (target_temp + overshoot_margin) }}"
@@ -449,4 +449,4 @@ action:
             target: { entity_id: "{{ status_entity }}" }
             data:
               value: >
-                COOL – {{ cool_setpoint }}°C (ab {{ (target_temp + overshoot_margin) | round(1) }}°C)
+                COOL • {{ cool_setpoint }} °C (ab {{ (target_temp + overshoot_margin) | round(1) }} °C)
