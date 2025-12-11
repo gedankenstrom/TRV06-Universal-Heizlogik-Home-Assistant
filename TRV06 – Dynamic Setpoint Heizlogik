@@ -288,10 +288,15 @@ variables:
 
   debug_log: !input debug
 
-  nowtime: "{{ now().strftime('%H:%M:%S') }}"
+  nowtime: "{{ now().time() }}"
   room_temp: "{{ states(room_temp_entity) | float(999) }}"
   trv_internal: "{{ states(trv_temp_entity) | float(20) }}"
-  daytime: "{{ day_start <= nowtime < night_start }}"
+
+  daytime: >
+    {{ now().time() >= strptime(day_start, '%H:%M:%S').time()
+       and
+       now().time() <  strptime(night_start, '%H:%M:%S').time() }}
+
   window_open: "{{ is_state(window_entity, 'on') }}"
 
   global_away: "{{ is_state(away_sw, 'on') }}"
