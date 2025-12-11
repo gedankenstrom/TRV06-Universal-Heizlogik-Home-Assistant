@@ -285,7 +285,6 @@ variables:
 
   away_offset_val: !input away_offset
   room_away_offset_val: !input room_away_offset
-
   debug_log: !input debug
 
   nowtime: "{{ now().time() }}"
@@ -302,7 +301,7 @@ variables:
   global_away: "{{ is_state(away_sw, 'on') }}"
   room_away_raw: "{{ is_state(room_away_sw, 'on') }}"
 
-  # Room-Away wird ignoriert, wenn Global-Away aktiv ist
+  # Room-Away ignorieren, wenn Global Away aktiv
   room_away: >
     {% if global_away %}
       false
@@ -315,21 +314,19 @@ variables:
   target_temp: >
     {% set t = base_target %}
 
-    {# ---- Global Away hat immer Priorität ---- #}
-    {% if global_away %}
-      {% set t = t - away_offset_val %}
-
-    {# ---- Nur wenn Global Away NICHT aktiv ist ---- #}
-    {% else %}
-      {% if room_away_raw %}
+    {# --- Abwesenheit wirkt NUR am Tag --- #}
+    {% if daytime %}
+      {% if global_away %}
+        {% set t = t - away_offset_val %}
+      {% elif room_away_raw %}
         {% set t = t - room_away_offset_val %}
       {% endif %}
     {% endif %}
 
     {{ t | round(1) }}
 
-  hold_setpoint: "{{ (trv_internal + hold_offset) | round(1) }}"
-  cool_setpoint: "{{ (trv_internal + cool_offset) | round(1) }}"
+  hold_setpoint: "{{ (trv_internal + hold_offset) | float | round(1) }}"
+  cool_setpoint: "{{ (trv_internal + cool_offset) | float | round(1) }}"
 
 
 ###############################################################################
