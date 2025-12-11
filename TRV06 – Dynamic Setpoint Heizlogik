@@ -312,17 +312,20 @@ variables:
 
   base_target: "{{ (day_set if daytime else night_set) | float }}"
 
-  # Absenkung nur tagsüber
   target_temp: >
     {% set t = base_target %}
-    {% if daytime %}
-      {% if global_away %}
-        {% set t = t - away_offset_val %}
-      {% endif %}
-      {% if room_away %}
+
+    {# ---- Global Away hat immer Priorität ---- #}
+    {% if global_away %}
+      {% set t = t - away_offset_val %}
+
+    {# ---- Nur wenn Global Away NICHT aktiv ist ---- #}
+    {% else %}
+      {% if room_away_raw %}
         {% set t = t - room_away_offset_val %}
       {% endif %}
     {% endif %}
+
     {{ t | round(1) }}
 
   hold_setpoint: "{{ (trv_internal + hold_offset) | round(1) }}"
@@ -344,8 +347,9 @@ action:
               name: "TRV06 Heizlogik"
               message: >
                 Raum={{ room_temp }}°C | TRV={{ trv_internal }}°C |
-                Ziel={{ target_temp }}°C | HOLD={{ hold_setpoint }}°C |
-                COOL={{ cool_setpoint }}°C |
+                Base={{ base_target }}°C | Ziel={{ target_temp }}°C |
+                OFFSETS: Away={{ away_offset_val }} | RoomAway={{ room_away_offset_val }} |
+                HOLD={{ hold_setpoint }}°C | COOL={{ cool_setpoint }}°C |
                 GlobalAway={{ global_away }} | RoomAway={{ room_away }} |
                 Mode={{ 'Tag' if daytime else 'Nacht' }} |
                 Fenster={{ window_open }}
@@ -454,4 +458,4 @@ action:
             target: { entity_id: "{{ status_entity }}" }
             data:
               value: >
-                COOL • {{ cool_setpoint }} °C (ab {{ (target_temp + overshoot_margin) | round(1) }} °C)
+                COOL • {{ cool_setpoint }} °C (ab {{ (target_temp + overshoot_margin) | round(1) }} °C • Ziel {{ target_temp }} °C)
