@@ -1,0 +1,539 @@
+blueprint:
+  name: TRV06 – Dynamic Setpoint Heizlogik (Sensor + Abwesenheit + Live-Status)
+  description: >
+    Komplett automatische Heizlogik für AVATTO TRV06 Thermostate.
+    Nutzt externe Temperatursensoren, TRV-Offsets, Tag/Nacht-Modus,
+    Fenster-Offen-Steuerung, globale Abwesenheit und lokale Raum-Abwesenheit.
+    Zusätzlich: Live-Statusausgabe im Dashboard.
+    Room-Away wird automatisch ignoriert, wenn Global-Away aktiv ist.
+
+  domain: automation
+
+  input:
+
+    ###########################################################################
+    # GRUND-ENTITÄTEN (Was wird gesteuert / womit wird gemessen)
+    ###########################################################################
+
+    climate:
+      name: Thermostat
+      description: >
+        Climate-Entity des TRV06 (z. B. climate.schlafzimmer_thermostat).
+        Diese Entität wird vom Blueprint geregelt (Setpoint, Modus ON/OFF).
+      selector:
+        entity:
+          domain: climate
+
+    room_temp_sensor:
+      name: Externer Raumtemperatursensor
+      description: >
+        Sensor für die ECHTE Temperatur im Raum (z. B. Zigbee-Sensor).
+        Dieser Wert ist die Basis für die Heizlogik, da der TRV oft ungenau misst.
+      selector:
+        entity:
+          domain: sensor
+
+    trv_internal_temp:
+      name: TRV interne Temperatur
+      description: >
+        Vom Thermostat gemessene Temperatur direkt am Heizkörper.
+        Wird genutzt, um HOLD- und COOL-Offsets dynamisch zu berechnen.
+      selector:
+        entity:
+          domain: sensor
+
+    heating_enabled:
+      name: Master EIN/AUS
+      description: >
+        Globaler EIN/AUS-Schalter für die gesamte Heizlogik (input_boolean).
+        OFF = TRV wird auf 5°C gesetzt und ausgeschaltet.
+      selector:
+        entity:
+          domain: input_boolean
+
+    status_text:
+      name: Status-Textausgabe
+      description: >
+        input_text.xxx, in den die Live-Statusnachricht geschrieben wird.
+        Ideal für Dashboard-Karten (z. B. „HEIZEN – 22.0°C“).
+      selector:
+        entity:
+          domain: input_text
+
+
+    ###########################################################################
+    # FENSTER / TÜR / LÜFTEN (Variante B – externer Helfer)
+    ###########################################################################
+
+    vent_blocker:
+      name: Lüften-Blocker (externer Helfer)
+      description: >
+        EIN Entity (input_boolean oder binary_sensor), die/der TRUE/ON ist,
+        wenn NICHT geheizt werden soll (Fenster/Tür offen, Lüften aktiv).
+        Debounce/Delay machst du in einer separaten Automation -> hier nur sauber schalten.
+      selector:
+        entity:
+          domain:
+            - input_boolean
+            - binary_sensor
+
+
+    ###########################################################################
+    # ZEITSPANNEN (4-Zeit-Version: Morgen / Mittag / Abend / Nacht)
+    ###########################################################################
+
+    morning_start_time:
+      name: Start Morgen
+      description: >
+        Ab dieser Uhrzeit gilt MORGEN (z. B. 08:00).
+      default: "08:00:00"
+      selector:
+        time: {}
+
+    midday_start_time:
+      name: Start Mittag
+      description: >
+        Ab dieser Uhrzeit gilt MITTAG (z. B. 12:00).
+      default: "12:00:00"
+      selector:
+        time: {}
+
+    evening_start_time:
+      name: Start Abend
+      description: >
+        Ab dieser Uhrzeit gilt ABEND (z. B. 18:00).
+      default: "18:00:00"
+      selector:
+        time: {}
+
+    night_start_time:
+      name: Start Nacht
+      description: >
+        Ab dieser Uhrzeit gilt NACHT (z. B. 22:00).
+      default: "22:00:00"
+      selector:
+        time: {}
+
+    morning_set_temp:
+      name: Morgen-Solltemperatur (°C)
+      description: >
+        Wunschtemperatur im MORGEN-Zeitfenster.
+      default: 22
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+
+    midday_set_temp:
+      name: Mittag-Solltemperatur (°C)
+      description: >
+        Wunschtemperatur im MITTAG-Zeitfenster.
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+
+    evening_set_temp:
+      name: Abend-Solltemperatur (°C)
+      description: >
+        Wunschtemperatur im ABEND-Zeitfenster.
+      default: 22
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+
+    night_set_temp:
+      name: Nacht-Solltemperatur (°C)
+      description: >
+        Wunschtemperatur im NACHT-Zeitfenster.
+        Wichtig: Nachts wird NICHT zusätzlich über Away abgesenkt (nur diese Nacht-Temp gilt).
+      default: 18
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+
+
+    ###########################################################################
+    # OFFSETS (HOLD/COOL dynamisch anhand TRV-intern)
+    ###########################################################################
+
+    hold_offset:
+      name: HOLD Offset (°C)
+      description: >
+        TRV-Setpoint zum HALTEN: TRV_intern + hold_offset.
+        Beispiel: TRV=20°C + 1°C -> 21°C.
+      default: 1
+      selector:
+        number:
+          min: -5
+          max: 5
+          step: 0.1
+
+    cool_offset:
+      name: COOL Offset (°C)
+      description: >
+        TRV-Setpoint bei Übertemperatur: TRV_intern + cool_offset (typisch negativ).
+        Beispiel: TRV=20°C + (-1°C) -> 19°C.
+      default: -1
+      selector:
+        number:
+          min: -10
+          max: 5
+          step: 0.1
+
+    overshoot_margin:
+      name: Overshoot-Marge (°C)
+      description: >
+        Ab Zieltemperatur + Overshoot wird auf COOL geschaltet.
+        HOLD gilt zwischen Zieltemperatur und (Ziel + Overshoot).
+      default: 0.2
+      selector:
+        number:
+          min: 0
+          max: 2
+          step: 0.1
+
+
+    ###########################################################################
+    # ABWESENHEIT (Optional aktivierbar; wirkt NUR tagsüber)
+    ###########################################################################
+
+    enable_global_away:
+      name: Global Away verwenden?
+      description: >
+        Wenn deaktiviert, wird Global-Away komplett ignoriert,
+        auch wenn der Abwesenheitsschalter ON ist.
+        Wirkt grundsätzlich nur tagsüber (nicht in der Nacht).
+      default: true
+      selector:
+        boolean: {}
+
+    away_mode:
+      name: Globaler Abwesenheitsschalter
+      description: >
+        input_boolean, das *die ganze Wohnung* als abwesend markiert.
+        Wenn aktiv: Room-Away wird ignoriert.
+      selector:
+        entity:
+          domain: input_boolean
+
+    away_offset:
+      name: Globale Absenkung (°C)
+      description: >
+        Temperaturabsenkung bei globaler Abwesenheit – nur tagsüber wirksam.
+      default: 2
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 0.5
+
+    enable_room_away:
+      name: Room Away verwenden?
+      description: >
+        Wenn deaktiviert, wird Room-Away komplett ignoriert.
+        Wirkt grundsätzlich nur tagsüber (nicht in der Nacht).
+      default: true
+      selector:
+        boolean: {}
+
+    room_away_mode:
+      name: Raum-Abwesenheit Schalter
+      description: >
+        input_boolean für den *einzelnen Raum*.
+        Wird ignoriert, wenn Global-Away aktiv ist.
+      selector:
+        entity:
+          domain: input_boolean
+
+    room_away_offset:
+      name: Room-Away Absenkung (°C)
+      description: >
+        Lokale Absenkung bei Abwesenheit nur im Raum – nur tagsüber aktiv.
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.1
+
+
+    ###########################################################################
+    # DEBUG
+    ###########################################################################
+
+    debug:
+      name: Debug aktivieren?
+      description: >
+        Wenn eingeschaltet, wird die komplette Heizlogik ins Logbuch geschrieben.
+      default: false
+      selector:
+        boolean: {}
+
+
+###############################################################################
+# TRIGGER (Wann neu berechnen / neu schalten?)
+###############################################################################
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  # Temperatur-Änderungen
+  - platform: state
+    entity_id: !input room_temp_sensor
+  - platform: state
+    entity_id: !input trv_internal_temp
+
+  # Master / Lüften / Away-Änderungen
+  - platform: state
+    entity_id: !input heating_enabled
+  - platform: state
+    entity_id: !input vent_blocker
+  - platform: state
+    entity_id: !input away_mode
+  - platform: state
+    entity_id: !input room_away_mode
+
+  # Zeitwechsel (Morgen/Mittag/Abend/Nacht)
+  - platform: time
+    at: !input morning_start_time
+  - platform: time
+    at: !input midday_start_time
+  - platform: time
+    at: !input evening_start_time
+  - platform: time
+    at: !input night_start_time
+
+
+###############################################################################
+# VARIABLES (Alles was wir für Entscheidungen brauchen)
+###############################################################################
+
+variables:
+  # --- Entitäten ---
+  climate_entity: !input climate
+  room_temp_entity: !input room_temp_sensor
+  trv_temp_entity: !input trv_internal_temp
+  status_entity: !input status_text
+  vent_entity: !input vent_blocker
+
+  # --- Zeiten / Sollwerte ---
+  morning_start: !input morning_start_time
+  midday_start: !input midday_start_time
+  evening_start: !input evening_start_time
+  night_start: !input night_start_time
+
+  morning_set: !input morning_set_temp
+  midday_set: !input midday_set_temp
+  evening_set: !input evening_set_temp
+  night_set: !input night_set_temp
+
+  # --- Offsets ---
+  hold_offset: !input hold_offset
+  cool_offset: !input cool_offset
+  overshoot_margin: !input overshoot_margin
+
+  # --- Away ---
+  away_sw: !input away_mode
+  room_away_sw: !input room_away_mode
+  enable_global_away: !input enable_global_away
+  enable_room_away: !input enable_room_away
+  away_offset_val: !input away_offset
+  room_away_offset_val: !input room_away_offset
+
+  # --- Debug ---
+  debug_log: !input debug
+
+  # --- Live Werte ---
+  nowtime: "{{ now().time() }}"
+  room_temp: "{{ states(room_temp_entity) | float(999) }}"
+  trv_internal: "{{ states(trv_temp_entity) | float(20) }}"
+
+  # --- Lüften aktiv? (externer Helfer) ---
+  vent_open: >
+    {% set s = states(vent_entity) %}
+    {{ s in ['on','true','True','1'] }}
+
+  # --- Zeitmodus: Nacht / Abend / Mittag / Morgen ---
+  is_night: >
+    {{ now().time() >= strptime(night_start, '%H:%M:%S').time()
+       or now().time() <  strptime(morning_start, '%H:%M:%S').time() }}
+
+  is_evening: >
+    {{ (not is_night)
+       and now().time() >= strptime(evening_start, '%H:%M:%S').time() }}
+
+  is_midday: >
+    {{ (not is_night)
+       and now().time() >= strptime(midday_start, '%H:%M:%S').time()
+       and now().time() <  strptime(evening_start, '%H:%M:%S').time() }}
+
+  mode_name: >
+    {% if is_night %}Nacht{% elif is_evening %}Abend{% elif is_midday %}Mittag{% else %}Morgen{% endif %}
+
+  # --- Basis-Solltemperatur je Zeitfenster ---
+  base_target: >
+    {% if is_night %}
+      {{ night_set | float }}
+    {% elif is_evening %}
+      {{ evening_set | float }}
+    {% elif is_midday %}
+      {{ midday_set | float }}
+    {% else %}
+      {{ morning_set | float }}
+    {% endif %}
+
+  # --- Away-Flags: wirken NUR tagsüber (also nicht nachts) ---
+  global_away: >
+    {{ enable_global_away and (not is_night) and is_state(away_sw, 'on') }}
+
+  room_away_raw: >
+    {{ enable_room_away and (not is_night) and is_state(room_away_sw, 'on') }}
+
+  # Room-Away wird ignoriert, wenn Global-Away aktiv ist
+  room_away: >
+    {% if global_away %}
+      false
+    {% else %}
+      {{ room_away_raw }}
+    {% endif %}
+
+  # --- Zieltemperatur (Basis minus optionaler Absenkung, aber NIE nachts) ---
+  target_temp: >
+    {% set t = base_target | float %}
+    {% if not is_night %}
+      {% if global_away %}
+        {% set t = t - (away_offset_val | float) %}
+      {% elif room_away_raw %}
+        {% set t = t - (room_away_offset_val | float) %}
+      {% endif %}
+    {% endif %}
+    {{ t | round(1) }}
+
+  # --- Dynamische TRV-Setpoints (halten / cool) ---
+  hold_setpoint: "{{ (trv_internal + hold_offset) | float | round(1) }}"
+  cool_setpoint: "{{ (trv_internal + cool_offset) | float | round(1) }}"
+
+
+###############################################################################
+# ACTIONS (Prioritäten: Debug -> Master OFF -> Lüften -> Normalbetrieb)
+###############################################################################
+
+action:
+
+  ###########################################################################
+  # 0) DEBUG (nur Logging)
+  ###########################################################################
+  - choose:
+      - conditions: "{{ debug_log }}"
+        sequence:
+          - service: logbook.log
+            data:
+              name: "TRV06 Heizlogik"
+              message: >
+                Raum={{ room_temp }}°C | TRV={{ trv_internal }}°C |
+                Mode={{ mode_name }} | Base={{ base_target }}°C | Ziel={{ target_temp }}°C |
+                OFFSETS: Away={{ away_offset_val }} | RoomAway={{ room_away_offset_val }} |
+                HOLD={{ hold_setpoint }}°C | COOL={{ cool_setpoint }}°C |
+                GlobalAway={{ global_away }} | RoomAway={{ room_away }} |
+                Lüften={{ vent_open }}
+
+  ###########################################################################
+  # 1) MASTER OFF (hart aus)
+  ###########################################################################
+  - choose:
+      - conditions:
+          - condition: state
+            entity_id: !input heating_enabled
+            state: "off"
+        sequence:
+          - service: climate.set_temperature
+            target: { entity_id: "{{ climate_entity }}" }
+            data: { temperature: 5 }
+          - delay: "00:00:02"
+          - service: climate.turn_off
+            target: { entity_id: "{{ climate_entity }}" }
+          - service: input_text.set_value
+            target: { entity_id: "{{ status_entity }}" }
+            data:
+              value: "AUS • Master OFF"
+          - stop: "MASTER OFF"
+
+  ###########################################################################
+  # 2) LÜFTEN / TÜR / FENSTER (externer Helfer entscheidet)
+  ###########################################################################
+  - choose:
+      - conditions: "{{ vent_open }}"
+        sequence:
+          - service: climate.set_temperature
+            target: { entity_id: "{{ climate_entity }}" }
+            data: { temperature: 5 }
+          - delay: "00:00:02"
+          - service: climate.turn_off
+            target: { entity_id: "{{ climate_entity }}" }
+          - service: input_text.set_value
+            target: { entity_id: "{{ status_entity }}" }
+            data:
+              value: "AUS • Lüften/Tür/Fenster"
+          - stop: "VENT BLOCK"
+
+  ###########################################################################
+  # 3) NORMALBETRIEB (Heizen / Halten / Cool)
+  ###########################################################################
+  - choose:
+
+      # A) HEIZEN: Raum ist kälter als Ziel
+      - conditions: "{{ room_temp < (target_temp | float) }}"
+        sequence:
+          - service: climate.turn_on
+            target: { entity_id: "{{ climate_entity }}" }
+          - service: climate.set_temperature
+            target: { entity_id: "{{ climate_entity }}" }
+            data:
+              temperature: "{{ target_temp | float }}"
+          - service: input_text.set_value
+            target: { entity_id: "{{ status_entity }}" }
+            data:
+              value: >
+                HEIZEN • {{ target_temp }} °C{% if (not is_night) and (global_away or room_away) %} (Absenkung){% endif %}
+
+      # B) HALTEN: zwischen Ziel und Ziel+Overshoot
+      - conditions: >
+          {{ (room_temp | float) >= (target_temp | float)
+             and (room_temp | float) < ((target_temp | float) + (overshoot_margin | float)) }}
+        sequence:
+          - service: climate.turn_on
+            target: { entity_id: "{{ climate_entity }}" }
+          - service: climate.set_temperature
+            target: { entity_id: "{{ climate_entity }}" }
+            data:
+              temperature: "{{ hold_setpoint | float }}"
+          - service: input_text.set_value
+            target: { entity_id: "{{ status_entity }}" }
+            data:
+              value: >
+                HALTEN • {{ hold_setpoint }} °C (bis {{ ((target_temp | float) + (overshoot_margin | float)) | round(1) }} °C)
+
+      # C) COOL: ab Ziel+Overshoot
+      - conditions: >
+          {{ (room_temp | float) >= ((target_temp | float) + (overshoot_margin | float)) }}
+        sequence:
+          - service: climate.turn_on
+            target: { entity_id: "{{ climate_entity }}" }
+          - service: climate.set_temperature
+            target: { entity_id: "{{ climate_entity }}" }
+            data:
+              temperature: "{{ cool_setpoint | float }}"
+          - service: input_text.set_value
+            target: { entity_id: "{{ status_entity }}" }
+            data:
+              value: >
+                COOL • {{ cool_setpoint }} °C (ab {{ ((target_temp | float) + (overshoot_margin | float)) | round(1) }} °C • Ziel {{ target_temp }} °C)
